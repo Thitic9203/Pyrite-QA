@@ -15,7 +15,7 @@
 
 ตอนสร้าง Pyrite-QA ผมแทนคำ `OLS` เป็น `Pyrite` แบบ mechanical ในทุกไฟล์ที่ยกมาจาก ols-qa รวมถึง `.gitignore` ทำให้กฎ `/references/*OLS-*` กลายเป็น `/references/*Pyrite-*` ซึ่งบน macOS (filesystem ไม่สนตัวพิมพ์) ไปตรงกับ `pyrite-project-guide.md` ไฟล์จึงไม่ถูก commit
 หลังจากนั้นผมรายงานเจ้าของงานว่าไฟล์ตั้งค่าอยู่ที่ path นั้น โดยตรวจแค่ว่ามีไฟล์ในเครื่อง ไม่ได้ตรวจว่ามันถูก track ใน git
-แก้แล้วใน `b636b6f` · ตัวตรวจลิงก์ที่บังคับให้ทุกลิงก์ใน markdown ชี้ไปไฟล์ที่ git track อยู่กำลังทำตาม `docs/sdd/md-link-check`
+แก้แล้วใน `b636b6f` · เพิ่มตัวตรวจลิงก์ `node tools/link-check/check.js <root> --tracked` (ทุกลิงก์ใน markdown ต้องชี้ไปไฟล์ที่ git track) เข้าชุดเทสต์แล้ว — รันกับ `b3b2602` จับได้ `CLAUDE.md:7 -> references/pyrite-project-guide.md`
 
 ---
 
@@ -80,7 +80,7 @@
 
 | # | มาตรการ | ชนิด | สถานะ |
 |---|---------|------|-------|
-| P1 | `tools/link-check/` — ทุกลิงก์ relative ในไฟล์ `.md` ที่ track ต้องชี้ไปไฟล์ที่ `git ls-files` มีอยู่ (ไฟล์ที่มีแค่ในเครื่องนับว่าพัง) รันใน pre-push และ CI (spec `docs/sdd/md-link-check`) | เครื่องมือ + เทส + CI | ค้าง |
+| P1 | `tools/link-check/` — ทุกลิงก์ relative ในไฟล์ `.md` ที่ track ต้องชี้ไปไฟล์ที่ `git ls-files` มีอยู่ (ไฟล์ที่มีแค่ในเครื่องนับว่าพัง) รันใน pre-push และ CI (spec `docs/sdd/md-link-check`) | เครื่องมือ + เทส + CI | ทำแล้ว |
 | P2 | `CLAUDE.md` §4: ก่อนแทนคำแบบ mechanical ต้องตัด `.gitignore` และไฟล์ pattern ออก แล้วตรวจด้วย `git check-ignore` ทุกไฟล์ที่ CLAUDE.md อ้าง | กฎ | ทำแล้ว |
 
 **กฎที่เพิ่มจากเหตุนี้:** `CLAUDE.md` §4 บรรทัด "แทนคำแบบ mechanical" · `tools/link-check/link_check.js`
@@ -110,7 +110,7 @@
 
 | # | Action | ผู้รับผิดชอบ | ความสำคัญ | สถานะ |
 |---|--------|--------------|-----------|-------|
-| 1 | เพิ่ม `tools/link-check/` + เทสต์ + ผูกเข้าชุดเทสต์ | Claude | High | Open |
+| 1 | เพิ่ม `tools/link-check/` + เทสต์ + ผูกเข้าชุดเทสต์ | Claude | High | Done |
 | 2 | เพิ่มกฎใน `CLAUDE.md` §4 | Claude | Medium | Done |
 
 ---

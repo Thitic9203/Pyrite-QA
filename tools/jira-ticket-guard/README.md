@@ -1,7 +1,7 @@
 # jira-ticket-guard
 
 บล็อกการเรียก `createJiraIssue` (ทุก Atlassian MCP connector) เว้นแต่จะยืนยันสดในเทิร์นนั้นก่อน
-สร้างขึ้นจาก [post-mortem #0054](../../docs/post-mortem/20260914-post-mortem-report-0054-filed-two-jira-tickets-without-explicit-go-ahead.md) —
+สร้างขึ้นจาก ols-qa post-mortem #0054 (filed two Jira tickets without an explicit go-ahead) —
 เปิด Jira ticket ใหม่เองระหว่างค้นคว้า โดยตีความกฎ "ค้นคว้าให้ครบก่อนบอกว่าติด" ขยายไปครอบสิทธิ์สร้าง
 ticket ด้วย
 

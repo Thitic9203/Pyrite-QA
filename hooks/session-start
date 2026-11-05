@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# SessionStart hook for Helix plugin — injects QA routing discipline (not a full skill dump).
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Update CHECK only (read-only: one git ls-remote on the release tags). Nothing is fetched, merged or
+# re-linked here; the user updates with `bash ~/.helix/tc-fe-prep/scripts/helix-auto-update.sh`.
+# See scripts/helix-auto-update.sh --check. The notice goes into the agent context only.
+_notice=""
+AU="${PLUGIN_ROOT}/scripts/helix-auto-update.sh"
+[ -x "$AU" ] || AU="$HOME/.helix/tc-fe-prep/scripts/helix-auto-update.sh"
+if [ -x "$AU" ]; then
+  _notice="$(HELIX_QUIET=1 HELIX_REPO_DIR="${HELIX_REPO_DIR:-$HOME/.helix/tc-fe-prep}" \
+    bash "$AU" --check 2>/dev/null | head -1 | tr -cd 'A-Za-z0-9 ._:/()+=,~-' | cut -c1-200 || true)"
+fi
+
+# Surface the last update failure (written by the update command, cleared by its next clean run).
+update_tip=""
+if [ -n "$_notice" ]; then
+  update_tip="\n\n---\n**Helix update available:** ${_notice}. Tell the user once, briefly; nothing was changed on this machine."
+fi
+_uerr="$HOME/.helix/last-update-error"
+if [ -s "$_uerr" ]; then
+  _last="$(tail -1 "$_uerr" 2>/dev/null | tr -cd 'A-Za-z0-9 ._:/()+=,-' | cut -c1-200)"
+  update_tip="${update_tip}\n\n---\n**Helix update problem:** ${_last}. Tell the user once, briefly; details are in ~/.helix/auto-update.log, and the update command is \`bash ~/.helix/tc-fe-prep/scripts/helix-auto-update.sh\`."
+fi
+
+# Proactive QA hint (suggest-only; opt-out HELIX_PROACTIVE=0). Woven into the context
+# JSON below — NEVER echoed separately (would corrupt the single JSON object).
+# Rules: references/proactive-qa-triggers.md. Never auto-runs a workflow (Rule #5).
+proactive_tip=""
+if [ "${HELIX_PROACTIVE:-1}" != "0" ] && command -v git >/dev/null 2>&1; then
+  _pqa_dir="${CLAUDE_PROJECT_DIR:-$PWD}"
+  _pqa_branch="$(git -C "$_pqa_dir" branch --show-current 2>/dev/null || true)"
+  case "$_pqa_branch" in
+    feat/*|feature/*) proactive_tip="\n\n---\n**Helix proactive hint (suggest-only):** Branch \`${_pqa_branch}\` may suit **TC FE prep** (\`/tc-fe-prep\`), or TC API prep if API-only. Suggestion only — nothing runs until the user picks from /helix. Silence: HELIX_PROACTIVE=0." ;;
+    fix/*|bugfix/*|hotfix/*) proactive_tip="\n\n---\n**Helix proactive hint (suggest-only):** Branch \`${_pqa_branch}\` may suit **Retest bug** (\`/retest-bug\`). Suggestion only — nothing runs until the user picks from /helix. Silence: HELIX_PROACTIVE=0." ;;
+  esac
+fi
+
+session_context="<EXTREMELY_IMPORTANT>\n**Helix** QA workflows available via slash-commands below. Each command loads its workflow — not ad-hoc procedure.\n\n| Command | Workflow |\n|---------|----------|\n| \`/helix\` | Router menu |\n| \`/tc-fe-prep\` | FE test case prep |\n| \`/tc-api-prep\` | API test case prep |\n| \`/retest-bug\` | Retest a bug fix |\n| \`/testing-ticket\` | Playwright ticket test |\n| \`/create-bug\` | File a new bug |\n\nEvidence before claims: no done/passed without proof. Reply in the user's language.\n</EXTREMELY_IMPORTANT>${update_tip}${proactive_tip}"
+
+if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+  printf '{\n  "additional_context": "%s"\n}\n' "$session_context"
+elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ]; then
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"
+else
+  printf '{\n  "additionalContext": "%s"\n}\n' "$session_context"
+fi
+
+exit 0

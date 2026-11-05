@@ -5,7 +5,7 @@ channel, webhook, link, id, account, env, folder, sheet, destination, token, end
 blocked until an episodic-memory search (`mcp__plugin_episodic-memory_episodic-memory__search`) has
 run **in the same turn**.
 
-**Why:** [report #0059](../../docs/post-mortem/20260916-post-mortem-report-0059-asked-owner-three-times-for-discord-destination-already-given.md).
+**Why:** ols-qa post-mortem report #0059 (asked the owner three times for a destination already given) — the report lives in the ols-qa repo.
 The owner was asked three times for a Discord destination they had given two days earlier. Only the
 `memory/` files were searched; the answer existed only in a past session's transcript. Repeat of
 #0021 — "not found in memory" is not "never answered".
@@ -18,7 +18,7 @@ The owner was asked three times for a Discord destination they had given two day
 | `searched` | a search tool call sits between the last user prompt and now | allow |
 | `not-searched` | the turn is readable and has no search | **block** |
 | `unverifiable` | the transcript or the question cannot be read, or a line in this turn is unparseable | **block**, with a recorded way out |
-| `fixed-destination` | the question asks *which* group / room / channel / server, it mentions TC review or the tc-review skill ran this session, and the ticket's project (key in the question, else the latest tc-review invocation) has a fixed channel (`FIXED_CHANNEL_PROJECTS`, today Pyrite) | **block**, no way out — ask only for the thread. Other projects use their own group and are not blocked by this rule ([spec](../../docs/sdd/tc-review-fixed-notify-channel/spec.md) R5) |
+| `fixed-destination` | the question asks *which* group / room / channel / server, it mentions TC review or the tc-review skill ran this session, and the ticket's project (key in the question, else the latest tc-review invocation) has a fixed channel (`FIXED_CHANNEL_PROJECTS` — empty in this repo until the owner confirms Pyrite's channel; see `references/pyrite-project-guide.md`) | **block**, no way out — ask only for the thread. Other projects use their own group and are not blocked by this rule (ols-qa spec `docs/sdd/tc-review-fixed-notify-channel` R5) |
 | `group-unrelated` | a which-group question with no TC review in the question or the session | allow |
 
 - **A turn** starts at the last genuine user prompt: a `user` line that is not `isMeta` and not a

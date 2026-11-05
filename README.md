@@ -4,6 +4,10 @@ Helix QA workspace for the **Pyrite** project (Jira key `PYR`). Same layout as t
 
 > 🔴 **This repo is public.** Never commit passwords, tokens, real hosts, account emails, sheet/drive/figma ids or customer names. Real values live in `~/.pyrite-qa-secrets/` on your machine only.
 
+## Install (one-time)
+
+The Helix skills already ship inside this repo — cloning it is the install. For the global Helix install (other projects, other agents), follow the pinned installer in the helix repo README: https://github.com/Thitic9203/helix#install-one-time
+
 ## Quick start
 
 1. Clone and open the folder in Claude Code (trust the folder when asked — `.claude/settings.json` wires the guards).
