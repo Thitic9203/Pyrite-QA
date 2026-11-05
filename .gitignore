@@ -58,7 +58,7 @@ __pycache__/
 /continue/
 /reports/
 /smoke-test/
-/references/*Pyrite-*
+/references/*PYR-*
 /references/tc-glossary.csv
 
 # Local-only QA working docs — contain real test-account emails/passwords. NEVER commit (repo is public).
