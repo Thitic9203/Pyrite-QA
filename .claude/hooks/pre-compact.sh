@@ -6,7 +6,7 @@ cat <<'DECISIONS'
 - Domain: {JIRA_DOMAIN}
 - Skill content language: English only
 - Chat language: Thai OK
-- QA lifecycle: READY TO TEST → TESTING → Done / BLOCKED
+- QA lifecycle: not confirmed for PYR — see references/pyrite-project-guide.md (never assume OLS statuses)
 - Workspace guide: references/pyrite-project-guide.md (read before asking Pyrite config)
 - .md edits in skills/references/commands/ are safe, do without asking
 - ทุกความผิดพลาดของ AI ต้องจบด้วย post-mortem ใน docs/post-mortem/ และห้ามผิดซ้ำ
