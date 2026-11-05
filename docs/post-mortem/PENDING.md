@@ -22,6 +22,7 @@
 
 | ID | เกิดเมื่อ | อาการ | ที่มา | สถานะ | รายงาน |
 |----|-----------|-------|-------|-------|--------|
+| PM-2026-11-05-03 | 2026-11-05 | รายงาน #0002 ยกคำสั่ง grep ทั้งบรรทัด ทำให้ชื่อลูกค้าและชื่อ env ของ OLS ขึ้น repo public ใน `71a7c80` · secret scan ไม่มี hash ของคำเหล่านี้จึงไม่บล็อก | แก้ catch-ai findings | DONE | 20261105-post-mortem-report-0003-report-quoted-customer-terms-into-public-repo.md |
 | PM-2026-11-05-02 | 2026-11-05 | ยืนยันว่า git history สะอาด 0 จุด ด้วย `git log -p` ที่ถูก rtk ย่อผลจนตัดบรรทัด Author ทิ้ง ตัวตรวจไม่ได้อ่านทั้ง history | catch-ai ของงาน bootstrap | DONE | 20261105-post-mortem-report-0002-history-sweep-read-rtk-compacted-git-log.md |
 | PM-2026-11-05-01 | 2026-11-05 | รายงานเจ้าของงานว่าไฟล์ตั้งค่าอยู่ที่ `references/pyrite-project-guide.md` ทั้งที่ไฟล์ถูก `.gitignore` ซ่อนและไม่เคยขึ้น GitHub จนถึง b636b6f | bootstrap Pyrite-QA | DONE | 20261105-post-mortem-report-0001-claimed-guide-shipped-while-gitignore-hid-it.md |
 

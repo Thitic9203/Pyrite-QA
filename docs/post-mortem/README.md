@@ -36,6 +36,7 @@ YYYYMMDD-post-mortem-report-NNNN-english-topic-slug.md
 |---|--------|--------|-------|------|
 | 0001 | 2026-11-05 | รายงานว่า project guide อยู่ใน repo ทั้งที่ .gitignore ซ่อนไฟล์ไว้ | Medium | [20261105-post-mortem-report-0001-claimed-guide-shipped-while-gitignore-hid-it.md](20261105-post-mortem-report-0001-claimed-guide-shipped-while-gitignore-hid-it.md) |
 | 0002 | 2026-11-05 | ยืนยัน history สะอาดด้วย git log ที่ถูก rtk ย่อผลลัพธ์ | Low | [20261105-post-mortem-report-0002-history-sweep-read-rtk-compacted-git-log.md](20261105-post-mortem-report-0002-history-sweep-read-rtk-compacted-git-log.md) |
+| 0003 | 2026-11-05 | รายงาน post-mortem ยกคำค้นที่มีชื่อลูกค้าขึ้น repo public | High | [20261105-post-mortem-report-0003-report-quoted-customer-terms-into-public-repo.md](20261105-post-mortem-report-0003-report-quoted-customer-terms-into-public-repo.md) |
 
 ## ขั้นตอนเมื่อรู้ตัวว่าพลาด
 

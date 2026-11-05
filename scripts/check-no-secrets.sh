@@ -47,6 +47,8 @@ ROOT = os.environ.get("SCAN_ROOT", ".")
 # ---- TIER 2: truncated sha256 (first 16 hex) of each lowercased literal. Entries inherited from
 # ---- ols-qa stay (they keep OLS identifiers out too); add Pyrite ones below the same way ----
 HASHES = {
+ # OLS customer / env names that must never appear in Pyrite-QA (post-mortem #0003)
+ "184c5a83b85c0595","7f5ad05b3e0a63b7","4a981bbb418f8d76","ffe1bb062cc47b13","439a4abe1f654438",
  "0aaf7876a0d97574","107479db766a4e52","1e7fb61e0c52e09a","28aada8630d19ed0",
  "2f30d4fda3b93580","30e3eb9790be8dfc","430b77817648f751","471e693d1d60fcad",
  "4f5f282a62bcba78","5482c82d6354cf9f","583df84135159c6e","5880330f98adb6b5",
