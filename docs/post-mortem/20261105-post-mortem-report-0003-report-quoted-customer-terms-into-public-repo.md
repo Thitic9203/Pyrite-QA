@@ -110,6 +110,7 @@
 |---|--------|--------------|-----------|-------|
 | 1 | hash + known-answer test | Claude | High | Done |
 | 2 | เขียน history ใหม่ (force-push main) เพื่อเอาคำออกจาก `71a7c80` — เจ้าของงานอนุมัติ 2026-11-05 | Claude | High | Done |
+| 3 | force-push ไม่พอ: GitHub ยังเปิด commit เก่าได้ด้วย sha (`gh api …/contents?ref=71a7c80` เจอ 2 จุด) → ลบ repo แล้วสร้างใหม่จาก `b2b681f` — เจ้าของงานอนุมัติ 2026-11-05 หลังยืนยันกับ session ที่ใช้ repo อยู่ · ผล: commit เก่าทั้ง 4 ตอบ `No commit found` · ล้าง reflog/clone เก่าในเครื่องแล้ว | Claude | High | Done |
 
 ---
 
