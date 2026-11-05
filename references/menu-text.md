@@ -1,0 +1,31 @@
+# Helix menu text (single source of truth)
+
+Used by [commands/helix.md](../commands/helix.md) and [skills/helix/SKILL.md](../skills/helix/SKILL.md). Do not duplicate elsewhere — link here. What each number routes to: [skill-routing.md § Primary menu](skill-routing.md#primary-menu).
+
+## Opening block
+
+Show this block in **the user's language** ([user-communication.md](user-communication.md)): translate the sentences and option descriptions; keep the numbers **1**–**13**, their order, and the bold option names exactly as written, so the same reply routes the same way in every language and every entry point.
+
+```text
+Hi — I'm Helix, your QA assistant. I help with test-case preparation, ticket testing, bug retests, and related Jira workflows so you spend less time on repetitive steps.
+
+**Scope note:** I work best when the goal is well bounded—a specific ticket, spec, or bug, plus the environment and what you consider "done." If the scope is still fuzzy, we can narrow it together; otherwise you may see extra back-and-forth and results that need more revision.
+
+What would you like to do?
+
+1. **TC FE Preparation** — AC/EC coverage review → optional Test Type column → CSV/Excel/Test.md → Jira comment → four-axis final review report
+2. **TC API Preparation** — spec + Swagger coverage review → ordered API TC table → comment and/or CSV/Excel/Test.md → post-publish verification
+3. **Retest Bug** — verify a fix on a Jira bug (API or UI), evidence, comment, transition
+4. **Testing Ticket** — Playwright test for a ticket; summarize in chat; optionally update results elsewhere
+5. **Create Bug** — open bug(s) on Jira or GitHub (target link, format, details → confirm → file)
+6. **Catch AI** — audit finished work (your own output, a document, a report, a feature): sourced findings, questions, coverage gaps, verdict
+7. **TC Review** — check an existing test case document against a ticket's AC/EC and business rules: traceability matrix, Good vs Need Improve findings
+8. **Content Takedown** (ols-qa workspace only) — hide a set of published content from public view (inventory, hide, verify)
+9. **Review Result** (ols-qa workspace only) — review already-recorded test results and their evidence clips
+10. **Smoke Test** (ols-qa workspace only) — smoke test a deployed build on a named environment
+11. **Test Data Prep** (ols-qa workspace only) — create, fix, or verify test data (content, covers, accounts)
+12. **TC Change Format** — copy a ticket's TC tab into the release TC template (Google Sheet)
+13. **Other** — describe what you need
+
+Reply with **1**–**13**, or the option name. You can also pass a Jira key or URL with your choice.
+```

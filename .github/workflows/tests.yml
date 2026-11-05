@@ -1,0 +1,105 @@
+name: tests
+
+# The repo carries real, executable guards, and until now nothing ran their tests
+# except a person remembering to. A gate whose tests only run by hand is a gate
+# that erodes quietly.
+#
+# Free on a public repository — no new spend.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  node-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run every test in tools/
+        run: |
+          # The suite list comes from scripts/list-test-suites.sh — the same script the
+          # pre-push hook calls. When the pattern was written out in both places they drifted:
+          # this copy refused an empty match, the hook's copy did not, and the push gate
+          # printed a tick over a commit it had never measured (report #0006).
+          #
+          # Exit 1 from the lister means "no suites in this tree" and 2 means "could not look".
+          # Both are failures here; neither is a pass.
+          #
+          # The status is captured with `set +e` around the assignment ON PURPOSE. Actions runs
+          # this block as `bash --noprofile --norc -eo pipefail`, and under `-e` a bare
+          # `SUITES="$(...)"` aborts the step the moment the lister exits non-zero — so a
+          # `case $?` written after it is unreachable and the step dies with no reason printed.
+          # Fail-closed with a silent refusal is the `rc=3` alert all over again.
+          # Executed, not assumed, by tools/push-gate/pre_push.test.js.
+          set +e
+          SUITES="$(bash scripts/list-test-suites.sh .)"
+          LIST_RC=$?
+          set -e
+          case "$LIST_RC" in
+            0) ;;
+            1) echo "no test suite found in this tree — 'none ran' is not 'all passed'"; exit 1 ;;
+            *) echo "could not enumerate the test suites (lister exit $LIST_RC)"; exit 1 ;;
+          esac
+
+          rc=0
+          found=0
+          while IFS= read -r t; do
+            [ -n "$t" ] || continue
+            found=$((found + 1))
+            echo "::group::$t"
+            node "$t" || rc=1
+            echo "::endgroup::"
+          done <<< "$SUITES"
+          echo "ran $found test file(s)"
+          exit $rc
+
+      - name: Secret guard over every tracked file
+        run: |
+          # The script takes file arguments (verified: it exits 2 on none), so the
+          # tracked list is passed in. A guard that silently scanned nothing would
+          # be worse than no guard.
+          test -f scripts/check-no-secrets.sh
+          git ls-files -z | xargs -0 bash scripts/check-no-secrets.sh
+
+      - name: Post-mortem guard (layer 10 — the local hooks can only bind this machine)
+        run: |
+          # Validates report structure, the ledger, the index and the numbering. Open debt
+          # is printed as a notice and does NOT fail the build: a report legitimately being
+          # written would otherwise hold main red, and a build that is red for days stops
+          # being read. Blocking on open debt is the pre-commit gate's job.
+          test -f tools/postmortem-guard/check.js
+          node tools/postmortem-guard/check.js
+
+      - name: The debt reminder itself still runs (a silent reminder is no reminder)
+        run: |
+          # Layers 3–6 all shell out to this one script. If it stops being executable or
+          # starts erroring, four layers go quiet at once and nothing else would say so.
+          test -x .claude/hooks/postmortem-debt.sh
+          CLAUDE_PROJECT_DIR="$PWD" bash .claude/hooks/postmortem-debt.sh
+
+  sdd-gate:
+    # Spec: docs/sdd/sdd-commit-gate — every feat/fix/test/refactor commit on a PR must cite
+    # docs/sdd/<slug>/ with spec.md, plan.md and tasks.md already on the base branch.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: SDD commit gate
+        run: node tools/sdd-gate/check.js --base "origin/${{ github.base_ref }}"

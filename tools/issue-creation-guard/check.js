@@ -1,0 +1,339 @@
+#!/usr/bin/env node
+"use strict";
+
+/**
+ * issue-creation-guard — ชั้นที่ 4/5/6 ของแนวป้องกัน "ห้ามเปิดบั๊ก/issue เองโดยอัตโนมัติ"
+ * (CLAUDE.md หัวข้อ 7 บรรทัดแรก)
+ *
+ * jira-ticket-guard ปิดทางเดียว: tool MCP `createJiraIssue` ไฟล์นี้ปิดทางที่เหลือ
+ *
+ *   L4  Bash      — curl POST ไป Jira REST create-issue · `gh issue create` · `jira issue create`
+ *   L5  Agent     — prompt ที่สั่ง subagent ให้ "เปิดบั๊ก/เปิด issue/สร้าง ticket"
+ *   L6  Stop      — เทิร์นที่มีความพยายามสร้าง issue โดยไม่มี confirm ต้องไม่จบเงียบ
+ *
+ * สัญญารหัสจบ (เหมือน jira-ticket-guard ทุกประการ):
+ *   0 = ปล่อยผ่าน · 2 = บล็อก · อื่นๆ = "ตัดสินไม่ได้" (wrapper จะปล่อยผ่านพร้อมเสียงดัง)
+ *
+ * อ่าน stdin ไม่ได้ / parse JSON ไม่ได้ = ตัดสินไม่ได้ → ปฏิเสธ (exit 2)
+ *   report #0005: การ์ดต้องมีสถานะ "ตรวจไม่ได้" และสถานะนั้นต้องนำไปสู่การปฏิเสธ
+ * ส่วน "พังข้างใน" (throw) wrapper จะปล่อยผ่าน เพราะการ์ดที่ล็อกเซสชันคือการ์ดที่ถูกลบทิ้ง
+ */
+
+const fs = require("fs");
+const path = require("path");
+
+const ROOT = process.env.CLAUDE_PROJECT_DIR || path.resolve(__dirname, "..", "..");
+const STATE_DIR = path.join(ROOT, ".claude", ".issue-creation-guard-state");
+const STATE_FILE = path.join(STATE_DIR, "armed.json");
+const ATTEMPT_FILE = path.join(STATE_DIR, "blocked-attempt.json");
+const TTL_MS = 10 * 60 * 1000;
+
+/**
+ * คำสั่ง shell ที่ "สร้าง" issue/bug ได้จริง — ไม่ใช่แค่พูดถึง
+ * เจตนา: จับการสร้าง ไม่ใช่การอ่าน (`gh issue list` / `GET .../issue/KEY` ต้องผ่าน)
+ */
+const BASH_PATTERNS = [
+  // gh issue create / gh api -X POST .../issues
+  { re: /\bgh\s+issue\s+create\b/, why: "gh issue create" },
+  { re: /\bgh\s+api\b[^\n]*\b(POST)\b[^\n]*\/issues\b/i, why: "gh api POST /issues" },
+  // jira CLI
+  { re: /\bjira\s+issue\s+create\b/, why: "jira issue create" },
+  // curl POST ไป Jira REST create-issue (ทั้ง /issue และ /issue/bulk)
+  {
+    re: /\/rest\/api\/\d\/issue(\/bulk)?(?=["'\s?&]|$)/,
+    needsPost: true,
+    why: "curl POST /rest/api/N/issue",
+  },
+];
+
+/** prompt ของ subagent ที่สั่งให้ "เปิด/สร้าง" bug · issue · ticket · improvement */
+// "เปิด" ในคำประสมที่ไม่ได้แปลว่าเปิด ticket (เปิดใช้งาน = enable, เปิด-ปิด, เปิดดู/เปิดหน้า = view)
+// ไม่นับเป็นคำกริยา — บั๊กคลาสเดียวกับ "ลง" ด้านล่าง (bare Thai substring) · 2026-09-30
+const AGENT_VERB = /(เปิด(?!\s*(ใช้งาน|ใช้|-?\s*ปิด|ดู|หน้า|แท็บ|ไฟล์|ลิงก์))|สร้าง|ยื่น|แจ้ง|open|create|file|raise|submit)/i;
+const AGENT_OBJECT = /(บั๊ก|บัค|ticket|issue|bug|defect|improvement)/i;
+// กริยากับกรรมต้องอยู่ใกล้กันในวลีเดียว ไม่ใช่แค่อยู่บรรทัดเดียวกัน — brief ยาวบรรทัดเดียวมี "สร้าง/แก้ไขเหรียญ"
+// กับ "tickets" ห่างกันหลายสิบตัวอักษรแล้วถูกบล็อกผิด (2026-09-30)
+const NEAR_CHARS = 25;
+const VERB_THEN_OBJECT = new RegExp(`${AGENT_VERB.source}[^\\n]{0,${NEAR_CHARS}}?${AGENT_OBJECT.source}`, "i");
+const OBJECT_THEN_VERB = new RegExp(`${AGENT_OBJECT.source}[^\\n]{0,${NEAR_CHARS}}?${AGENT_VERB.source}`, "i");
+// "ลง" (post/file to a tracker — ต้นเหตุจริงคือ #0054 "...ลง Jira") ตัดออกจาก AGENT_VERB
+// เพราะเป็นพยางค์เดี่ยวไม่มีขอบเขตคำในภาษาไทย จับซ้อนเข้าไปใน "หลง"/"ลงมือ"/"ลงไฟล์" ที่ไม่เกี่ยว
+// (post-mortem 2026-09-22: บล็อก Agent dispatch 2 ครั้งผิดจากคำเหล่านี้) — ต้องให้ "ลง" อยู่ติดกับ
+// ปลายทางจริง (Jira/ticket/issue/บั๊ก) แทน ไม่ใช่แค่ปรากฏที่ไหนก็ได้ในบรรทัดเดียวกับ AGENT_OBJECT
+const POST_TO_TRACKER_VERB = /ลง\s*(Jira|jira|บั๊ก|บัค|ticket|issue|bug|defect|improvement)/i;
+
+// ชื่อสกิล · branch · path · ไฟล์ ไม่ใช่คำสั่งให้เปิด issue (docs/sdd/issue-guard-identifier-fp R1 R2)
+// เคสจริง 2026-10-28: "create-bug-workflow" และ "fix/r5-testing-ticket, PR #74 open" ถูกบล็อกผิด
+const VERB_WORD = /^(open|create|file|raise|submit)$/i;
+const OBJECT_WORD = /^(ticket|issue|bug|defect|improvement)s?$/i;
+function isIdentifier(token) {
+  const core = token.replace(/^[`'"(\[<]+|[`'"),.;:\]>]+$/g, "");
+  if (core.includes("/") && /[-.]/.test(core)) return true; // path หรือ branch
+  if (/\.[A-Za-z]{1,5}$/.test(core) && !/\s/.test(core) && /^[\w~./-]+$/.test(core)) return true; // ไฟล์
+  const parts = core.split("-");
+  if (parts.length >= 3 && parts.every((p) => /^[A-Za-z0-9_]+$/.test(p))) return true; // kebab ≥3 ส่วน
+  if (parts.length === 2 && parts.every((p) => /^[A-Za-z0-9_]+$/.test(p))) {
+    const [a, b] = parts;
+    if ((VERB_WORD.test(a) && OBJECT_WORD.test(b)) || (OBJECT_WORD.test(a) && VERB_WORD.test(b))) return true;
+  }
+  return false;
+}
+function stripIdentifiers(line) {
+  return line
+    .split(/(\s+)/)
+    .map((tok) => (/\S/.test(tok) && isIdentifier(tok) ? " " : tok))
+    .join("");
+}
+
+function readState() {
+  try {
+    return JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function writeState(state) {
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2) + "\n");
+}
+
+function clearState() {
+  try {
+    fs.unlinkSync(STATE_FILE);
+  } catch {
+    /* ไม่มีอยู่แล้วก็คือสิ่งที่ต้องการ */
+  }
+}
+
+function isFresh(state, now = Date.now()) {
+  if (!state || typeof state.armedAt !== "number") return false;
+  if (state.consumed === true) return false;
+  return now - state.armedAt >= 0 && now - state.armedAt <= TTL_MS;
+}
+
+function recordAttempt(channel, why) {
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.writeFileSync(
+      ATTEMPT_FILE,
+      JSON.stringify({ at: Date.now(), channel, why }, null, 2) + "\n"
+    );
+  } catch {
+    /* บันทึกไม่ได้ก็ไม่เปลี่ยนคำตัดสินของ gate */
+  }
+}
+
+function readAttempt() {
+  try {
+    return JSON.parse(fs.readFileSync(ATTEMPT_FILE, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function clearAttempt() {
+  try {
+    fs.unlinkSync(ATTEMPT_FILE);
+  } catch {
+    /* ว่างอยู่แล้ว */
+  }
+}
+
+/**
+ * @returns {{hit:boolean, why?:string}} คำสั่ง bash นี้สร้าง issue ไหม
+ */
+function inspectBash(command) {
+  if (typeof command !== "string" || command.length === 0) return { hit: false };
+  const hasPost = /-X\s*['"]?POST|--request\s*['"]?POST|--data|-d\s|-F\s/i.test(command);
+  for (const p of BASH_PATTERNS) {
+    if (!p.re.test(command)) continue;
+    if (p.needsPost && !hasPost) continue;
+    return { hit: true, why: p.why };
+  }
+  return { hit: false };
+}
+
+/**
+ * @returns {{hit:boolean, why?:string}} prompt ของ agent นี้สั่งเปิดบั๊กไหม
+ */
+function inspectAgentPrompt(text) {
+  if (typeof text !== "string" || text.length === 0) return { hit: false };
+  // ดูทีละบรรทัด เพื่อไม่ให้ "อย่าเปิดบั๊ก" ที่อยู่คนละย่อหน้ากับคำกริยาอื่นถูกนับ
+  for (const raw of text.split(/\n+/)) {
+    const line = raw.trim();
+    const words = stripIdentifiers(line);
+    if (!AGENT_OBJECT.test(words)) continue;
+    if (
+      !VERB_THEN_OBJECT.test(words) &&
+      !OBJECT_THEN_VERB.test(words) &&
+      !POST_TO_TRACKER_VERB.test(words)
+    )
+      continue;
+    // บรรทัดที่เป็น "ข้อห้าม" ไม่ใช่คำสั่งให้เปิด
+    // "อย่า(?!ง)" กันไม่ให้จับคำว่า "อย่าง" (แปลว่า kind/way ไม่ใช่คำห้าม) ที่พบระหว่างเขียนเทสต์
+    // ของบั๊ก "ลง" ข้างบนพอดี (2026-09-22) — เป็นบั๊กคนละตัวแต่คลาสเดียวกัน (bare Thai substring)
+    if (/(ห้าม|อย่า(?!ง)|ไม่ต้อง|never|do not|don't|must not|without)/i.test(line)) continue;
+    return { hit: true, why: line.slice(0, 120) };
+  }
+  return { hit: false };
+}
+
+function blockMessage(channel, why) {
+  return [
+    "=== 🔴 issue-creation-guard: บล็อกไว้ก่อนครับ ===",
+    "",
+    `ช่องทาง: ${channel}`,
+    `สิ่งที่ตรวจพบ: ${why}`,
+    "",
+    "CLAUDE.md หัวข้อ 7: ห้ามเปิดบั๊ก/issue เองโดยอัตโนมัติ ถ้าเจ้าของงานไม่ได้สั่งก่อน เด็ดขาด",
+    "ให้รายงานในแชทพร้อมหลักฐาน แล้วถามว่าจะให้เปิดไหม",
+    "",
+    "ได้คำยืนยันสดจากเจ้าของงานแล้ว ค่อยปลดล็อกด้วย:",
+    '  node tools/issue-creation-guard/check.js --confirm "<คำพูดที่เจ้าของงานอนุญาต>"',
+    `  (ใช้ได้ครั้งเดียว · หมดอายุใน ${TTL_MS / 60000} นาที)`,
+  ].join("\n");
+}
+
+function readStdin() {
+  try {
+    return fs.readFileSync(0, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function cmdGate() {
+  const raw = readStdin();
+  if (raw === null) {
+    console.error("=== 🔴 issue-creation-guard: อ่าน stdin ไม่ได้ — ตรวจไม่ได้ จึงปฏิเสธ ===");
+    return 2;
+  }
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    console.error("=== 🔴 issue-creation-guard: payload ไม่ใช่ JSON — ตรวจไม่ได้ จึงปฏิเสธ ===");
+    return 2;
+  }
+
+  const toolName = payload && payload.tool_name;
+  const input = (payload && payload.tool_input) || {};
+
+  let channel = null;
+  let found = { hit: false };
+
+  if (toolName === "Bash") {
+    channel = "Bash";
+    found = inspectBash(input.command);
+  } else if (toolName === "Task" || toolName === "Agent") {
+    channel = "Agent";
+    found = inspectAgentPrompt(input.prompt);
+  } else {
+    return 0; // ไม่ใช่ช่องทางที่การ์ดนี้ดูแล
+  }
+
+  if (!found.hit) return 0;
+
+  const state = readState();
+  if (isFresh(state)) {
+    writeState({ ...state, consumed: true });
+    clearAttempt();
+    console.error(
+      `=== ✅ issue-creation-guard: มีคำยืนยันจากเจ้าของงาน (${state.reason}) — ปล่อยผ่านครั้งนี้ ===`
+    );
+    return 0;
+  }
+
+  recordAttempt(channel, found.why);
+  console.error(blockMessage(channel, found.why));
+  return 2;
+}
+
+/** L6 — Stop hook: เทิร์นที่มีความพยายามที่ถูกบล็อก ต้องไม่จบเงียบ */
+function cmdStopAudit() {
+  const attempt = readAttempt();
+  if (!attempt) return 0;
+  clearAttempt();
+  console.error(
+    [
+      "=== 🔴 issue-creation-guard: เทิร์นนี้มีความพยายามเปิด issue ที่ถูกบล็อก ===",
+      `ช่องทาง: ${attempt.channel} · ตรวจพบ: ${attempt.why}`,
+      "",
+      "ห้ามจบเทิร์นโดยไม่บอกเจ้าของงานครับ — ต้องรายงานในแชทว่าเจออะไร แนบหลักฐาน",
+      "แล้วถามว่าจะให้เปิด issue ไหม ก่อนจะทำอย่างอื่นต่อ",
+    ].join("\n")
+  );
+  return 2;
+}
+
+function cmdConfirm(reason) {
+  if (!reason || !reason.trim()) {
+    console.error('ต้องใส่เหตุผลครับ: --confirm "<คำพูดที่เจ้าของงานอนุญาต>"');
+    return 1;
+  }
+  writeState({ armedAt: Date.now(), reason: reason.trim(), consumed: false });
+  console.log(
+    `ปลดล็อกให้แล้วครับ (ใช้ได้ครั้งเดียว หมดอายุใน ${TTL_MS / 60000} นาที) — เหตุผล: ${reason.trim()}`
+  );
+  return 0;
+}
+
+function cmdStatus() {
+  const state = readState();
+  if (!state) {
+    console.log("ยังไม่มีคำยืนยัน — การ์ดบล็อกการสร้าง issue ทุกช่องทางที่ดูแลอยู่");
+    return 0;
+  }
+  const age = Math.round((Date.now() - state.armedAt) / 1000);
+  console.log(
+    `คำยืนยัน: ${state.reason} · อายุ ${age} วินาที · consumed=${state.consumed} · fresh=${isFresh(state)}`
+  );
+  return 0;
+}
+
+function main(argv) {
+  const mode = argv[2];
+  switch (mode) {
+    case "--gate":
+      return cmdGate();
+    case "--stop-audit":
+      return cmdStopAudit();
+    case "--confirm":
+      return cmdConfirm(argv[3]);
+    case "--status":
+      return cmdStatus();
+    case "--clear":
+      clearState();
+      clearAttempt();
+      console.log("ล้างสถานะแล้วครับ");
+      return 0;
+    default:
+      console.error(
+        "ใช้: check.js --gate | --stop-audit | --confirm \"<เหตุผล>\" | --status | --clear"
+      );
+      return 1;
+  }
+}
+
+if (require.main === module) {
+  process.exit(main(process.argv));
+}
+
+module.exports = {
+  BASH_PATTERNS,
+  TTL_MS,
+  STATE_FILE,
+  STATE_DIR,
+  ATTEMPT_FILE,
+  inspectBash,
+  inspectAgentPrompt,
+  stripIdentifiers,
+  isFresh,
+  readState,
+  writeState,
+  clearState,
+  readAttempt,
+  recordAttempt,
+  clearAttempt,
+};

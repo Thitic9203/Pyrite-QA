@@ -1,0 +1,52 @@
+# Verify closing checklist (unified)
+
+Use with [session-closing.md](session-closing.md). Check all that apply.
+
+Apply [qa-evidence-gates.md](qa-evidence-gates.md) before any pass/post/done claim.
+
+## All workflows
+
+- [ ] User-facing messages follow the user's language ([user-communication.md](user-communication.md))
+- [ ] No success claim without tool output **and** destination re-read where applicable ([qa-evidence-gates.md](qa-evidence-gates.md))
+- [ ] Approval gates were not skipped
+- [ ] Artifact index posted
+- [ ] One-line next-workflow suggestion offered (or “none” stated)
+- [ ] `Verdict:` block posted
+
+## TC FE / TC API prep
+
+- [ ] Coverage review **Ready for draft: YES** was posted
+- [ ] Coverage delta table posted ([coverage-delta-template.md](coverage-delta-template.md))
+- [ ] File row count matches approved table (if files written)
+- [ ] Jira/destination UI matches draft (not API response alone)
+- [ ] **Post-publish review passed** ([jira-comment-post-review.md](jira-comment-post-review.md)): no literal `<br>`/HTML tags, numbered items on separate lines, attachment present
+- [ ] **CSV/Excel attached to Jira issue** (not just saved in workspace) — footer link verified working
+- [ ] **Final TC review report posted** ([tc-final-review-report.md](../skills/procedures/tc-fe-prep-workflow/references/tc-final-review-report.md)): four axes **PASS** (AC/EC alignment, spelling, numbering, scope)
+- [ ] Agent did NOT report "commented" / "done" / "TC prep complete" before all checks passed
+
+## Testing ticket
+
+- [ ] Pre-flight **Ready to run: YES** was posted before run
+- [ ] F1–F3 summary posted before Phase G
+- [ ] **AC/EC coverage gate reconciled** ([qa-evidence-gates.md](qa-evidence-gates.md) § *AC/EC & bug-detail coverage*): `enumerated in-scope AC*/EC* ids == rows carrying a verdict + evidence (or explicit BLOCKED)`; every AC/EC is its own row (none only in a remark/Notes/chat), no case PASSED on partial coverage, no id left `NOT TESTED` unless explicitly out-of-scope at confirm
+- [ ] Every scenario has result + evidence reference
+- [ ] Phase G6 re-read completed if external update ran
+- [ ] If Jira/Confluence update: no literal `<br>`/HTML tags, numbered items on separate lines
+
+## Retest bug
+
+- [ ] Retest plan (dev claim vs verify) posted before tests
+- [ ] **AC/EC & bug-detail coverage gate reconciled** ([qa-evidence-gates.md](qa-evidence-gates.md) § *AC/EC & bug-detail coverage*): `enumerated ER* ids == verdict-table rows carrying a status + evidence (or explicit BLOCKED)`, `Expected-result coverage: {n}/{total}` with `{n}=={total}`; every expected-result/detail item is its own row (none only in a remark/note/chat), no PASSED over an unverified or differing item
+- [ ] Comment format v2/v3 not switched mid-session
+- [ ] **`node tools/retest-guard/retest_guard.js --body <file> --format v2|v3 --bug-type FE|API` exits 0** — the mechanical rules (syntax, header lines, table headers, Scope, per-row evidence, coverage reconciliation, local paths) are checked by `tools/retest-guard/retest_rules.js`, not from memory. Exit 2 (could not run) is **not** a pass.
+- [ ] **Step 8·0 format-completeness gate PASSED before any status transition** — FE bug: a whole-flow **MP4 per executed case** linked in that row's `Evidence` cell and confirmed to play from Jira, **plus** a bare inline `!file.png!` still on every text-verification row; API bug: full cURL/response per row. A text-only FE comment fails this gate → do NOT transition, resolve or get explicit user waiver first.
+- [ ] MP4s and stills attached to the issue before the v2 wiki embed (FE), each MP4 green on the 7-layer quality + correctness gate
+- [ ] Transition names match workspace guide
+- [ ] Post-publish review passed: no stray HTML/markup tags, numbered items on separate lines ([jira-comment-post-review.md](jira-comment-post-review.md))
+- [ ] **If the bug landed in Done (PASSED): Step 8d run** — every story this bug `blocks` re-checked on the story's own "is blocked by" list (only **Done** counts as resolved); a story moved to ready-for-QA only if it was parked in the blocked status and every blocker cleared; anything still blocked, or already further along than blocked, reported instead of transitioned.
+
+## Create bug
+
+- [ ] Draft shown before create
+- [ ] Each created issue URL fetched and body matches draft
+- [ ] `CREATED n/n` in verdict

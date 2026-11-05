@@ -1,0 +1,152 @@
+#!/bin/bash
+# pyrite-qa pre-push — ครึ่งฟีเจอร์ต้องไม่ขึ้นสาขาหลัก
+#
+# CI จับเทสต์แดงได้ก็จริง แต่จับได้ "หลัง" ของขึ้นไปแล้ว 2026-09-05 พิสูจน์ว่าราคานั้นแพงจริง:
+# ชั้นตัดสินของ investigation-guard ขึ้น main โดยไม่มี hook ตามไปด้วย เทสต์ที่ผูก wiring ไว้
+# จึงแดงบน main อยู่พักหนึ่ง และใครที่ clone ไประหว่างนั้นได้การ์ดที่ไม่ทำงาน
+#
+# 🔴 เทสต์รันบน "commit ที่กำลังจะ push" ไม่ใช่บน working tree — worktree นี้มีหลาย session
+# ทำงานพร้อมกัน ไฟล์ค้างของคนอื่นจึงทำให้เทสต์แดงด้วยเรื่องที่ไม่เกี่ยวกับสิ่งที่กำลัง push
+# (และแย่กว่านั้น: อาจเขียวทั้งที่ commit จริงพัง) ตรวจ tree ที่จะขึ้นเท่านั้นถึงจะตอบถูก
+#
+# fail closed: รันไม่ได้ = ไม่ให้ push · gate ที่รันไม่ได้ ไม่ใช่ gate ที่ผ่าน
+set -uo pipefail
+
+# ROOT is load-bearing now: the suite list is read from a script under it.
+ROOT="$(git rev-parse --show-toplevel)" || ROOT=""
+if [ -z "$ROOT" ] || [ ! -f "$ROOT/scripts/list-test-suites.sh" ]; then
+  echo "[pyrite-qa pre-push] ❌ หา scripts/list-test-suites.sh ไม่เจอ — ตรวจไม่ได้ = ไม่ให้ push"
+  exit 1
+fi
+if ! . "$ROOT/scripts/git-env-clean.sh" || ! ( git_env_clean ); then
+  echo "[pyrite-qa pre-push] ❌ ล้างตัวแปร git ที่ hook ได้รับไม่ได้ (scripts/git-env-clean.sh) — ตรวจไม่ได้ = ไม่ให้ push"
+  exit 1
+fi
+ZERO='0000000000000000000000000000000000000000'
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "[pyrite-qa pre-push] ❌ ไม่มี node — รันชุดเทสต์ไม่ได้ push ถูกบล็อก (fail-closed)"
+  exit 1
+fi
+
+# stdin: <local ref> <local sha> <remote ref> <remote sha>
+#
+# นับสองอย่างแยกกัน: บรรทัดที่อ่านได้ทั้งหมด กับ sha ที่ต้องเทสต์จริง เพราะ "ไม่มีบรรทัดเลย"
+# กับ "มีแต่บรรทัดลบ ref" เป็นคนละเรื่อง อันแรกแปลว่า git ไม่ได้บอกอะไรเรามา หรือมีคนรัน
+# hook นี้เองโดยไม่ป้อน stdin ซึ่ง "ไม่มีอะไรให้วัด" ไม่เท่ากับ "วัดแล้วผ่าน"
+# (วัดจริง 2026-09-06: stdin ว่างและ stdin ขยะ ทั้งคู่จบด้วย exit 0 และ output 0 ไบต์
+#  แยกไม่ออกจาก push ที่ผ่านจริงบนหน้าจอคนใช้)
+LINES=0
+MALFORMED=0
+SHAS=()
+while read -r _lref lsha _rref _rsha; do
+  [ -n "${_lref:-}${lsha:-}" ] || continue
+  LINES=$((LINES + 1))
+  # บรรทัดที่อ่านไม่ออกต้องนับแยก ไม่ใช่ข้ามเงียบๆ — ตอนที่ข้ามเฉยๆ `garbage` หนึ่งบรรทัด
+  # ถูกนับเป็น ref แล้วตกไปอยู่กับสาขา "เป็นการลบทั้งหมด" จึงผ่านด้วยเหตุผลที่ไม่จริง
+  case "${lsha:-}" in
+    [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]*) ;;
+    *) MALFORMED=$((MALFORMED + 1)); continue ;;
+  esac
+  [ "$lsha" = "$ZERO" ] && continue      # การลบ ref ไม่มีอะไรให้เทสต์
+  SHAS+=("$lsha")
+done
+
+if [ "$MALFORMED" -gt 0 ]; then
+  echo "[pyrite-qa pre-push] ❌ push ถูกบล็อก — อ่าน $MALFORMED บรรทัดจาก stdin ไม่ออก"
+  echo "  รูปแบบที่ git ป้อนคือ '<local ref> <local sha> <remote ref> <remote sha>'"
+  echo "  อ่านไม่ออก = ไม่รู้ว่ากำลังจะ push อะไร ซึ่งไม่เท่ากับไม่มีอะไรให้ตรวจ"
+  exit 1
+fi
+
+if [ "$LINES" -eq 0 ]; then
+  echo "[pyrite-qa pre-push] ❌ push ถูกบล็อก — ไม่ได้รับรายการ ref ทาง stdin เลย"
+  echo "  git จะป้อน '<local ref> <local sha> <remote ref> <remote sha>' มาให้เสมอ"
+  echo "  ไม่ได้รับ = ตรวจไม่ได้ว่ากำลังจะ push อะไร ซึ่งไม่เท่ากับไม่มีอะไรให้ตรวจ"
+  exit 1
+fi
+
+# มีแต่บรรทัดลบ ref จริงๆ — ไม่มีอะไรให้เทสต์ และบอกออกไปด้วยว่าทำไมถึงผ่าน
+if [ "${#SHAS[@]}" -eq 0 ]; then
+  echo "[pyrite-qa pre-push] ผ่าน — $LINES ref ที่จะ push เป็นการลบทั้งหมด ไม่มี commit ให้วัด"
+  exit 0
+fi
+
+TMP="$(mktemp -d)"
+cleanup() { git worktree remove --force "$TMP/wt" >/dev/null 2>&1 || true; rm -rf "$TMP"; }
+trap cleanup EXIT
+
+for sha in "${SHAS[@]}"; do
+  if ! git worktree add --detach --quiet "$TMP/wt" "$sha" >/dev/null 2>&1; then
+    echo "[pyrite-qa pre-push] ❌ กาง worktree ของ $sha ไม่ได้ — ตรวจไม่ได้ = ไม่ให้ push"
+    exit 1
+  fi
+
+  echo "[pyrite-qa pre-push] รันชุดเทสต์บน ${sha:0:8} …"
+
+  # รายชื่อชุดเทสต์มาจากที่เดียว — scripts/list-test-suites.sh — ทั้ง hook นี้และไฟล์ CI
+  # เรียกตัวเดียวกัน เพราะตอนที่ pattern ถูกเขียนสองที่ ฝั่ง CI มีตัวนับและปฏิเสธศูนย์
+  # ส่วนฝั่งนี้ไม่มี จึงพิมพ์ว่าเขียวทับ commit ที่ไม่เคยวัด (รายงาน #0006)
+  #
+  # เรียกสคริปต์จากเวิร์กทรีปัจจุบัน ไม่ใช่จากทรีที่กำลังตรวจ — กฎที่ใช้ตัดสินคือกฎของวันนี้
+  # และคอมมิตเก่าอาจยังไม่มีไฟล์นี้อยู่เลย
+  rc=0
+  found=0
+  SUITES="$(bash "$ROOT/scripts/list-test-suites.sh" "$TMP/wt")"
+  case $? in
+    0) ;;
+    1) git worktree remove --force "$TMP/wt" >/dev/null 2>&1 || true
+       echo "[pyrite-qa pre-push] ❌ push ถูกบล็อก — ไม่พบไฟล์เทสต์ใน commit ${sha:0:8} เลยสักไฟล์"
+       echo "  ไม่มีอะไรให้วัด ไม่เท่ากับวัดแล้วผ่าน — gate ที่ไม่ได้วัดจะไม่บอกว่าเขียว"
+       echo "  ถ้าชุดเทสต์ถูกย้ายที่จริง ให้แก้ที่ scripts/list-test-suites.sh ที่เดียว"
+       exit 1 ;;
+    *) git worktree remove --force "$TMP/wt" >/dev/null 2>&1 || true
+       echo "[pyrite-qa pre-push] ❌ push ถูกบล็อก — หารายชื่อชุดเทสต์ไม่ได้ (scripts/list-test-suites.sh)"
+       echo "  ตรวจไม่ได้ ไม่เท่ากับตรวจแล้วผ่าน"
+       exit 1 ;;
+  esac
+
+  while IFS= read -r t; do
+    [ -n "$t" ] || continue
+    found=$((found + 1))
+    # git ส่ง GIT_DIR และพวกเดียวกันมาให้ hook เสมอ ถ้าปล่อยติดไปกับชุดเทสต์ ชุดที่สร้าง repo
+    # ชั่วคราวของตัวเองจะถูกเบนไปยิงใส่ repo ข้างนอกแทน — วัดจริง 2026-09-06 คอมมิตเดียวกัน
+    # push จากเวิร์กทรีหลักผ่าน push จากเวิร์กทรีที่กางเพิ่มแดง 2 เคส ด่านที่ตอบไม่เหมือนกัน
+    # ตามที่ยืนอยู่ ไม่ใช่ด่าน
+    if ! ( cd "$TMP/wt" && git_env_clean && node "$t" >"$TMP/out" 2>&1 ); then
+      rc=1
+      echo "  ❌ $t"
+      grep -E '^FAIL' "$TMP/out" | head -5 | sed 's/^/     /'
+    fi
+  done <<< "$SUITES"
+
+  git worktree remove --force "$TMP/wt" >/dev/null 2>&1 || true
+
+  # ตัวนับของ hook เอง ไม่ใช่ของ lister
+  #
+  # รายงาน #0006 ปิดด้วยการ "นับสิ่งที่วัดจริง แล้วศูนย์ = ปฏิเสธ" แต่พอย้ายรายชื่อไปไว้ที่
+  # scripts/list-test-suites.sh ตัวปฏิเสธศูนย์ย้ายตามไปทั้งอัน เหลือที่เดียวในระบบ —
+  # และ `<<< "$SUITES"` บนค่าว่างให้หนึ่งบรรทัดว่าง ไม่ใช่ศูนย์บรรทัด ถ้า lister วันไหน
+  # จบด้วย 0 พร้อม stdout ว่าง ทั้ง hook นี้และ CI จะพิมพ์เครื่องหมายถูกทับศูนย์ชุดพร้อมกัน
+  # (วัดจริง 2026-09-06 ด้วย lister ปลอมที่ exit 0 แล้วไม่พิมพ์อะไร: found=0 และผ่าน)
+  #
+  # ชั้นนี้จึงต้องมีของตัวเอง ไม่ใช่ยืมของชั้นอื่น
+  if [ "$found" -eq 0 ]; then
+    echo "[pyrite-qa pre-push] ❌ push ถูกบล็อก — วัดไปได้ 0 ชุดบน commit ${sha:0:8}"
+    echo "  รายชื่อชุดเทสต์ตอบว่าสำเร็จแต่ไม่มีชื่อไหนออกมา — ตรวจ scripts/list-test-suites.sh"
+    echo "  ไม่ได้วัดอะไรเลย ไม่เท่ากับวัดแล้วผ่าน"
+    exit 1
+  fi
+
+  if [ "$rc" -ne 0 ]; then
+    echo "[pyrite-qa pre-push] ❌ push ถูกบล็อก — commit ${sha:0:8} เทสต์ไม่ผ่าน"
+    echo "  แก้ที่ต้นเหตุแล้วคอมมิตใหม่ ห้าม --no-verify"
+    echo "  ถ้าเทสต์แดงเพราะฟีเจอร์ขึ้นไปครึ่งเดียว ให้คอมมิตส่วนที่ขาดให้ครบก่อน"
+    exit 1
+  fi
+done
+
+# บอกจำนวนชุดที่รันจริงเสมอ ไม่ใช่แค่เครื่องหมายถูก — ตัวเลขที่หายไปหรือหดลงผิดปกติ
+# คือสัญญาณเดียวที่คนเห็นได้ว่า gate เริ่มวัดน้อยลง ก่อนที่มันจะวัดไม่ได้เลย
+echo "[pyrite-qa pre-push] ✅ ชุดเทสต์เขียวบนทุก commit ที่จะ push ($found ชุดต่อ commit)"
+exit 0

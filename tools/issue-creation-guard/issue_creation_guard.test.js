@@ -1,0 +1,276 @@
+#!/usr/bin/env node
+"use strict";
+
+/**
+ * known-answer suite สำหรับ issue-creation-guard
+ * กฎจาก CLAUDE.md §1 / report #0002: ทุกชุดเทสต์ต้องมี "ต้องจับได้" อย่างน้อย 1
+ * และ "ต้องไม่จับ" อย่างน้อย 1 · และต้องแตะของจริงบนดิสก์อย่างน้อย 1 ข้อ
+ */
+
+const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const { execFileSync } = require("child_process");
+
+// ใช้โฟลเดอร์สถานะชั่วคราวเสมอ: เดิมเทสต์อ่าน .claude/.issue-creation-guard-state ของ repo จริง
+// จึงเฟลทุกครั้งที่มี armed.json (consumed) ค้างจากการปลดล็อกจริงของเจ้าของงาน (2026-09-30)
+// ต้องตั้งก่อน require เพราะ check.js อ่าน CLAUDE_PROJECT_DIR ตอนโหลด · โปรเซสลูกได้ env นี้ต่อ
+const ISOLATED_ROOT = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "icg-test-")));
+process.env.CLAUDE_PROJECT_DIR = ISOLATED_ROOT;
+
+const G = require("./check.js");
+const CHECK = path.join(__dirname, "check.js");
+
+let pass = 0;
+const fails = [];
+function t(name, fn) {
+  try {
+    fn();
+    pass++;
+  } catch (e) {
+    fails.push(`${name}: ${e.message}`);
+  }
+}
+
+// ---------- L4 Bash: ต้องจับได้ ----------
+const MUST_CATCH_BASH = [
+  'gh issue create --title "[Bug] x" --body-file b.md',
+  "gh api -X POST repos/o/r/issues -f title=x",
+  "jira issue create --project Pyrite",
+  `command curl --cacert ca.pem -X POST "https://x/rest/api/3/issue" -d @payload.json`,
+  `command curl -X POST https://x/rest/api/2/issue/bulk --data @p.json`,
+];
+MUST_CATCH_BASH.forEach((cmd, i) =>
+  t(`bash must-catch #${i + 1}`, () =>
+    assert.strictEqual(G.inspectBash(cmd).hit, true, cmd)
+  )
+);
+
+// ---------- L4 Bash: ต้องไม่จับ (อ่านอย่างเดียว / ไม่เกี่ยว) ----------
+const MUST_PASS_BASH = [
+  "gh issue list --state open",
+  "gh issue view 42",
+  `command curl --cacert ca.pem "https://x/rest/api/3/issue/PYR-599"`,
+  "git status",
+  `command curl -X POST "https://x/rest/api/3/issue/PYR-599/comment" -d @c.json`,
+];
+MUST_PASS_BASH.forEach((cmd, i) =>
+  t(`bash must-pass #${i + 1}`, () =>
+    assert.strictEqual(G.inspectBash(cmd).hit, false, cmd)
+  )
+);
+
+// ---------- L5 Agent prompt ----------
+t("agent must-catch: สั่งเปิดบั๊ก", () =>
+  assert.strictEqual(
+    G.inspectAgentPrompt("ตรวจเคสนี้แล้วเปิดบั๊กใน Jira ให้ด้วย").hit,
+    true
+  )
+);
+t("agent must-catch: create a GitHub issue", () =>
+  assert.strictEqual(
+    G.inspectAgentPrompt("Then create a GitHub issue for the defect.").hit,
+    true
+  )
+);
+t("agent must-pass: บรรทัดห้าม", () =>
+  assert.strictEqual(
+    G.inspectAgentPrompt("ห้ามเปิดบั๊กเองเด็ดขาด รายงานในแชทพอ").hit,
+    false
+  )
+);
+t("agent must-pass: Do not open any issue", () =>
+  assert.strictEqual(
+    G.inspectAgentPrompt("Do not open any issue without an order.").hit,
+    false
+  )
+);
+t("agent must-pass: งานอัดคลิปปกติ", () =>
+  assert.strictEqual(
+    G.inspectAgentPrompt("อัดคลิป Profile_TC_009 แล้ว verify ด้วย verify_video.py").hit,
+    false
+  )
+);
+
+// ---------- root cause #0054: "ลง Jira" ต้องยังจับได้ แต่ "ลง" เดี่ยวๆ ต้องไม่จับมั่ว ----------
+// (post-mortem 2026-09-22: bare "ลง" เคยจับ "หลงเหลือ"/"ลงมือ"/"ลงไฟล์" ที่ไม่เกี่ยวกับ tracker เลย)
+t("agent must-catch: บันทึกผลลง Jira เป็น bug ใหม่", () =>
+  assert.strictEqual(
+    G.inspectAgentPrompt("บันทึกผลการค้นคว้าที่ทำเสร็จแล้วอย่างเป็นทางการลง Jira เป็น bug ใหม่").hit,
+    true
+  )
+);
+// พบระหว่างเขียนเทสต์ข้อบน: "อย่า" เดิมจับ "อย่าง" มั่ว ทำให้บรรทัดนี้เคยหลุดผ่านการ์ดทั้งที่ควรบล็อก
+t("agent must-catch: คำว่า 'อย่าง' ต้องไม่ถูกนับเป็นคำห้าม (false-negative เดิม)", () =>
+  assert.strictEqual(
+    G.inspectAgentPrompt("เปิด bug ใหม่อย่างเป็นทางการใน Jira ให้ด้วย").hit,
+    true
+  )
+);
+t("agent must-pass: หลงเหลือ (ไม่ใช่ ลง+object ติดกัน)", () =>
+  assert.strictEqual(
+    G.inspectAgentPrompt(
+      "หลงเหลือในคลิปจริงหรือไม่ เพื่อประเมินว่าความเสี่ยงที่พบเป็นแค่ช่องว่างเอกสาร หรือมีคลิปเปื้อนจริงหลุดผ่าน issue tracking ไปแล้ว"
+    ).hit,
+    false
+  )
+);
+t("agent must-pass: เขียนผลลงไฟล์ (ลงไฟล์ ไม่ใช่ ลง tracker) แม้บรรทัดมีคำว่าบั๊กด้วย", () =>
+  assert.strictEqual(
+    G.inspectAgentPrompt("เขียนผลลงไฟล์ตามเคสนี้ก่อนเสมอ ปัญหานี้คือบั๊กที่ต้องสืบเพิ่ม").hit,
+    false
+  )
+);
+// 2026-09-30: brief ของ agent เก็บภาพ Figma ถูกบล็อกผิด — "เปิด" มาจาก "เปิดใช้งาน" และ "สร้าง" มาจาก
+// "สร้าง/แก้ไขเหรียญ" ส่วน "tickets" อยู่ห่างออกไปคนละวลี ในบรรทัดเดียวกัน
+t("agent must-pass: เปิดใช้งาน/สร้างเหรียญ กับ tickets ที่อยู่คนละวลี", () =>
+  assert.strictEqual(
+    G.inspectAgentPrompt(
+      "- PYR-809 (Admin การจัดการผู้ใช้งาน: รายการผู้ใช้งาน, รายละเอียด, dialog ระงับ/เปิดใช้งาน) and PYR-807 (Admin จัดการเหรียญรางวัล: รายการ, เลือก Template, สร้าง/แก้ไขเหรียญ): 14516-375746 (same node shared by several tickets; find the frames for these screens inside it, Mobile and Tablet variants)"
+    ).hit,
+    false
+  )
+);
+t("agent must-pass: เปิดใช้งาน อยู่ติดคำว่า ticket ก็ไม่ใช่การเปิด ticket", () =>
+  assert.strictEqual(G.inspectAgentPrompt("ตรวจปุ่มเปิดใช้งาน ticket นี้ในหน้ารายการ").hit, false)
+);
+t("agent must-catch: เปิด ticket ใหม่ (คำกริยาติดกับกรรม)", () =>
+  assert.strictEqual(G.inspectAgentPrompt("เจอแล้วให้เปิด ticket ใหม่ใน Jira").hit, true)
+);
+t("agent must-catch: กรรมมาก่อนกริยา — bug นี้สร้างให้ด้วย", () =>
+  assert.strictEqual(G.inspectAgentPrompt("bug นี้สร้างให้ด้วยใน Jira").hit, true)
+);
+// ชื่อสกิล/branch/path ไม่ใช่คำสั่ง (docs/sdd/issue-guard-identifier-fp R1–R3, 2026-10-28):
+// brief ของเลนถูกบล็อกผิดเพราะ "create-bug" และ "fix/r5-testing-ticket, PR #74 open"
+t("agent must-pass: ชื่อสกิล create-bug-workflow + branch fix/r5-create-bug", () =>
+  assert.strictEqual(
+    G.inspectAgentPrompt(
+      "Your scope: create-bug-workflow bodies only, worktree `~/GitHub/pyrite-qa/.worktrees/fix/r5-create-bug` (branch fix/r5-create-bug, PR #72 already open with head 0e18d29)."
+    ).hit,
+    false
+  )
+);
+t("agent must-pass: branch ลงท้าย -ticket ตามด้วยสถานะ PR open", () =>
+  assert.strictEqual(
+    G.inspectAgentPrompt(
+      "Your scope: testing-ticket-workflow bodies only (and commands/testing-ticket.md), worktree `~/GitHub/pyrite-qa/.worktrees/fix/r5-testing-ticket` (branch fix/r5-testing-ticket, PR #74 open, head e519ccd)."
+    ).hit,
+    false
+  )
+);
+t("agent must-pass: ชื่อสั้นสองส่วน create-bug เป็นชื่อ ไม่ใช่คำสั่ง", () =>
+  assert.strictEqual(G.inspectAgentPrompt("Review the create-bug skill text for P1 findings.").hit, false)
+);
+t("agent must-catch: Open a GitHub issue ยังโดนบล็อก", () =>
+  assert.strictEqual(G.inspectAgentPrompt("Open a GitHub issue for the failing case.").hit, true)
+);
+t("agent must-catch: bug-report สองส่วนไม่มีกริยา ยังเป็นกรรม", () =>
+  assert.strictEqual(G.inspectAgentPrompt("open a bug-report for this").hit, true)
+);
+t("agent must-catch: ticket/bug ไม่มี - หรือ . ไม่ใช่ path", () =>
+  assert.strictEqual(G.inspectAgentPrompt("create a ticket/bug in Jira").hit, true)
+);
+t("stripIdentifiers: ตัดเฉพาะชื่อ ไม่แตะคำปกติ", () => {
+  assert.strictEqual(typeof G.stripIdentifiers, "function");
+  const out = G.stripIdentifiers("see fix/r5-create-bug and create-bug-workflow and notes.md then open a bug-report");
+  assert.ok(!/create-bug|notes\.md/.test(out), out);
+  assert.ok(/open a bug-report/.test(out), out);
+});
+
+// ---------- อายุของ confirm ----------
+t("isFresh: consumed แล้วใช้ไม่ได้", () =>
+  assert.strictEqual(G.isFresh({ armedAt: Date.now(), consumed: true }), false)
+);
+t("isFresh: หมดอายุแล้วใช้ไม่ได้", () =>
+  assert.strictEqual(
+    G.isFresh({ armedAt: Date.now() - G.TTL_MS - 1000, consumed: false }),
+    false
+  )
+);
+t("isFresh: สดและยังไม่ใช้ = ผ่าน", () =>
+  assert.strictEqual(G.isFresh({ armedAt: Date.now(), consumed: false }), true)
+);
+
+// ---------- แตะของจริงบนดิสก์: รัน check.js --gate เป็นโปรเซสจริง ----------
+function gate(payload) {
+  try {
+    const out = execFileSync("node", [CHECK, "--gate"], {
+      input: JSON.stringify(payload),
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return { code: 0, out };
+  } catch (e) {
+    return { code: e.status, out: (e.stderr || "") + (e.stdout || "") };
+  }
+}
+
+const hadState = fs.existsSync(G.STATE_FILE);
+assert.strictEqual(hadState, false, "เทสต์นี้ต้องเริ่มจากสถานะที่ยังไม่มี confirm");
+assert.ok(
+  G.STATE_DIR.startsWith(ISOLATED_ROOT),
+  "เทสต์ต้องใช้โฟลเดอร์สถานะชั่วคราว ไม่ใช่ของ repo จริง"
+);
+
+t("disk: gate บล็อก gh issue create (exit 2)", () => {
+  const r = gate({ tool_name: "Bash", tool_input: { command: "gh issue create -t x" } });
+  assert.strictEqual(r.code, 2);
+  assert.ok(/issue-creation-guard/.test(r.out), "ต้องมีข้อความบล็อก");
+});
+
+t("disk: gate ปล่อย git status (exit 0)", () => {
+  const r = gate({ tool_name: "Bash", tool_input: { command: "git status" } });
+  assert.strictEqual(r.code, 0);
+});
+
+t("disk: stdin ที่ไม่ใช่ JSON = ตรวจไม่ได้ จึงปฏิเสธ", () => {
+  let code;
+  try {
+    execFileSync("node", [CHECK, "--gate"], { input: "not json", stdio: ["pipe", "pipe", "pipe"] });
+    code = 0;
+  } catch (e) {
+    code = e.status;
+  }
+  assert.strictEqual(code, 2);
+});
+
+t("disk: บันทึกความพยายามที่ถูกบล็อกไว้จริง", () => {
+  gate({ tool_name: "Bash", tool_input: { command: "gh issue create -t x" } });
+  const a = G.readAttempt();
+  assert.ok(a && a.channel === "Bash", "ต้องมีไฟล์ blocked-attempt");
+});
+
+t("disk: --stop-audit ปฏิเสธการจบเทิร์นแล้วล้างธง", () => {
+  let code;
+  try {
+    execFileSync("node", [CHECK, "--stop-audit"], { stdio: ["pipe", "pipe", "pipe"] });
+    code = 0;
+  } catch (e) {
+    code = e.status;
+  }
+  assert.strictEqual(code, 2);
+  assert.strictEqual(G.readAttempt(), null, "ต้องล้างธงหลังรายงาน");
+});
+
+t("disk: confirm แล้วผ่านได้ครั้งเดียว", () => {
+  execFileSync("node", [CHECK, "--confirm", "เจ้าของงานสั่งเปิด ticket นี้"], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const first = gate({ tool_name: "Bash", tool_input: { command: "gh issue create -t x" } });
+  assert.strictEqual(first.code, 0, "ครั้งแรกต้องผ่าน");
+  const second = gate({ tool_name: "Bash", tool_input: { command: "gh issue create -t y" } });
+  assert.strictEqual(second.code, 2, "ครั้งที่สองต้องถูกบล็อก");
+});
+
+// คืนสภาพ: ห้ามทิ้ง confirm ค้างไว้
+G.clearState();
+G.clearAttempt();
+assert.strictEqual(fs.existsSync(G.STATE_FILE), false, "ต้องไม่เหลือ state ค้าง");
+
+if (fails.length) {
+  console.error(`issue-creation-guard: ${pass} ผ่าน, ${fails.length} ไม่ผ่าน`);
+  fails.forEach((f) => console.error("  ✗ " + f));
+  process.exit(1);
+}
+console.log(`issue-creation-guard: ผ่านครบ ${pass} ข้อ (must-catch ${MUST_CATCH_BASH.length + 4} · must-pass ${MUST_PASS_BASH.length + 5} · แตะดิสก์จริง 6)`);
